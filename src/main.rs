@@ -1,10 +1,10 @@
-use url;
+
 use std::io::BufRead;
 use std::error::Error;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use log::*;
-use simplelog;
+
 
 fn url_to_host(url: &str) -> Result<String, Box<dyn Error>> {
     let parsed_url = url::Url::parse(url)?;
@@ -32,7 +32,7 @@ fn read_feeds(fname: &str) -> Result<
             }
         };
         ht.entry(host_str)
-            .or_insert_with(|| Vec::new())
+            .or_insert_with(Vec::new)
             .push(line.to_string());
     }
     Ok(ht)
@@ -56,9 +56,9 @@ impl EntryInfo {
             Err("wrong number of elements per line!".into())
         } else {
             Ok(EntryInfo {
-                age: str::parse::<u32>(&parts[0])?,
+                age: str::parse::<u32>(parts[0])?,
                 status: parts[1].to_string(),
-                retries: str::parse::<u32>(&parts[2])?,
+                retries: str::parse::<u32>(parts[2])?,
                 seen: parts[3].to_string(),
                 published: parts[4].to_string(),
                 url: parts[5].to_string(),
@@ -66,11 +66,11 @@ impl EntryInfo {
             })
         }
     }
-    fn to_str(self) -> String {
+    fn into_str(self) -> String {
         let sage = format!("{}", self.age);
         let sretries = format!("{}", self.retries);
         [sage, self.status, sretries, self.seen, self.published, self.url, self.title]
-            .map(|s| s.replace("\t", ""))
+            .map(|s| s.replace('\t', ""))
             .join("\t") + "\n"
     }
 }
@@ -109,7 +109,7 @@ async fn fetch_feed(client: &reqwest::Client, feed_url: &str) ->
 async fn process_feed(body: &mut bytes::Bytes, feed_url: &str) ->
         Result<Vec<EntryInfo>, Box<dyn Error + Sync + Send>> {
     use bytes::Buf;
-    let feed = feed_rs::parser::parse_with_uri(body.reader(), Some(&feed_url))?;
+    let feed = feed_rs::parser::parse_with_uri(body.reader(), Some(feed_url))?;
     Ok(feed.entries.into_iter().filter_map(
         |entry| {
             if entry.links.is_empty() { return None; }
@@ -200,16 +200,13 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         let mut feed_has_new_entries = false;
         for entry in fr {
             entries_all += 1;
-            match url_to_planidx.get(&entry.url) {
-                Some(planidx) => {
-                    if *planidx > last_previous_planidx {
-                        entries_seen_multiple_times_in_new_plan += 1;
-                    } else {
-                        plan[*planidx].age = 0;
-                    }
-                    continue;
+            if let Some(planidx) = url_to_planidx.get(&entry.url) {
+                if *planidx > last_previous_planidx {
+                    entries_seen_multiple_times_in_new_plan += 1;
+                } else {
+                    plan[*planidx].age = 0;
                 }
-                None => {},
+                continue;
             }
             feed_has_new_entries = true;
             entries_new += 1;
@@ -228,7 +225,7 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     info!("writing output");
     for entry in plan {
         use std::io::Write;
-        plan_out.write_all(entry.to_str().as_bytes())?;
+        plan_out.write_all(entry.into_str().as_bytes())?;
     }
     info!("done");
     Ok(())
