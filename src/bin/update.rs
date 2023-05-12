@@ -1,99 +1,51 @@
-
 use std::io::BufRead;
 use std::error::Error;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use log::*;
+use feed_fetcher::{EntryInfo, read_plan, url_to_host};
+use clap::Parser;
 
+const VERSION: &str = git_version::git_version!(args=["--tags","--always", "--dirty"]);
 
-fn url_to_host(url: &str) -> Result<String, Box<dyn Error>> {
-    let parsed_url = url::Url::parse(url)?;
-    match parsed_url.host_str() {
-        Some(s) => Ok(s.to_string()),
-        None => Err("URL has no hostname".into()),
-    }
+/// Update fetch plan from a list of feeds
+#[derive(Parser, Debug)]
+#[clap(author, version=VERSION, about)]
+struct Args {
+    /// input plan, can be an empty file
+    plan_in: String,
+
+    /// output plan to be written
+    plan_out: String,
+
+    /// list of feeds to check
+    feeds: String,
 }
 
 fn read_feeds(fname: &str) -> Result<
-        HashMap<String, Vec<String>>,
+        (HashMap<String, Vec<String>>, usize),
         Box<dyn Error + Sync + Send>> {
     let f = std::fs::File::open(fname)?;
     let br = std::io::BufReader::new(f);
     let mut ht = std::collections::HashMap::new();
+    let mut total_feeds = 0;
     for line in br.lines() {
         let line = line?;
         let line = line.trim();
         if line.is_empty() { continue; }
-        let host_str = match url_to_host(line) {
+        let host_str = match crate::url_to_host(line) {
             Ok(s) => s,
             Err(e) => {
                 warn!("parsing feed URL ({}) failed: {}", line, e);
                 continue;
             }
         };
+        total_feeds += 1;
         ht.entry(host_str)
             .or_insert_with(Vec::new)
             .push(line.to_string());
     }
-    Ok(ht)
-}
-
-#[derive(Debug)]
-struct EntryInfo {
-    age: u32,
-    status: String,
-    retries: u32,
-    seen: String,
-    published: String,
-    url: String,
-    title: String,
-}
-
-impl EntryInfo {
-    fn from_str(s: &str) -> Result<EntryInfo, Box<dyn Error>> {
-        let parts = s.split('\t').collect::<Vec<&str>>();
-        if parts.len() != 7 {
-            Err("wrong number of elements per line!".into())
-        } else {
-            Ok(EntryInfo {
-                age: str::parse::<u32>(parts[0])?,
-                status: parts[1].to_string(),
-                retries: str::parse::<u32>(parts[2])?,
-                seen: parts[3].to_string(),
-                published: parts[4].to_string(),
-                url: parts[5].to_string(),
-                title: parts[6].to_string(),
-            })
-        }
-    }
-    fn into_str(self) -> String {
-        let sage = format!("{}", self.age);
-        let sretries = format!("{}", self.retries);
-        [sage, self.status, sretries, self.seen, self.published, self.url, self.title]
-            .map(|s| s.replace('\t', ""))
-            .join("\t") + "\n"
-    }
-}
-
-fn read_plan(fname: &str) -> Result<
-        Vec<EntryInfo>, Box<dyn Error + Sync + Send>> {
-    let f = std::fs::File::open(fname)?;
-    let br = std::io::BufReader::new(f);
-    let mut plan = Vec::new();
-    for line in br.lines() {
-        let line = line?;
-        let line = line.trim();
-        if line.is_empty() { continue; }
-        let ei = match EntryInfo::from_str(line) {
-            Ok(ei) => ei, 
-            Err(e) => {
-                warn!("parsing plan entry failed: {}\n{}", e, line);
-                continue;
-            }
-        };
-        plan.push(ei);
-    }
-    Ok(plan)
+    Ok((ht, total_feeds))
 }
 
 async fn fetch_feed(client: &reqwest::Client, feed_url: &str) ->
@@ -151,6 +103,7 @@ async fn fetch_feeds_single_origin(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
+    let args = Args::parse();
     simplelog::TermLogger::init(
         simplelog::LevelFilter::Trace,
         simplelog::Config::default(),
@@ -158,9 +111,9 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         simplelog::ColorChoice::Auto,
     )?;
 
-    let feeds_by_host = read_feeds("feeds.txt")?;
-    let mut plan_out = std::fs::File::create("plan_out")?;
-    let mut plan = read_plan("plan_in")?;
+    let (feeds_by_host, total_feeds) = read_feeds(&args.feeds)?;
+    let mut plan_out = std::fs::File::create(&args.plan_out)?;
+    let mut plan = read_plan(&args.plan_in)?;
 
     let mut url_to_planidx = HashMap::<String, usize>::new();
     for (planidx, entry) in plan.iter().enumerate() {
@@ -194,7 +147,13 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     let mut entries_new = 0;
     let mut entries_seen_multiple_times_in_new_plan = 0;
 
+    let mut last_report_time = std::time::Instant::now();
+
     while let Some(fr) = rx.recv().await {
+        if last_report_time.elapsed().as_secs() >= 60 {
+            info!("processed {} feeds out of {}", feeds_all, total_feeds);
+            last_report_time = std::time::Instant::now();
+        }
         feeds_all += 1;
         feeds_with_entries += if fr.is_empty() { 0 } else { 1 };
         let mut feed_has_new_entries = false;
