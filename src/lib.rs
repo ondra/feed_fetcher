@@ -17,6 +17,7 @@ pub struct EntryInfo {
     pub retries: u32,
     pub seen: String,
     pub published: String,
+    pub feed: String,
     pub url: String,
     pub title: String,
 }
@@ -33,15 +34,16 @@ impl EntryInfo {
                 retries: str::parse::<u32>(parts[2])?,
                 seen: parts[3].to_string(),
                 published: parts[4].to_string(),
-                url: parts[5].to_string(),
-                title: parts[6].to_string(),
+                feed: parts[5].to_string(),
+                url: parts[6].to_string(),
+                title: parts[7].to_string(),
             })
         }
     }
     pub fn into_str(self) -> String {
         let sage = format!("{}", self.age);
         let sretries = format!("{}", self.retries);
-        [sage, self.status, sretries, self.seen, self.published, self.url, self.title]
+        [sage, self.status, sretries, self.seen, self.published, self.feed, self.url, self.title]
             .map(|s| s.replace('\t', ""))
             .join("\t") + "\n"
     }

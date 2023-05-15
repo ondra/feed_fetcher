@@ -4,8 +4,6 @@ use tokio::sync::mpsc;
 use log::*;
 use feed_fetcher::{read_plan, url_to_host};
 use clap::Parser;
-
-use serde_jsonlines;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -14,7 +12,8 @@ struct FetchEntry<'a> {
     title: &'a str,
     published: &'a str,
     seen: &'a str,
-    fetched: &'a str,
+    downloaded: &'a str,
+    feed: &'a str,
     body: &'a str,
 }
 
@@ -32,6 +31,10 @@ struct Args {
 
     /// jsonlines fetched data output file
     data_out: String,
+
+    /// time in seconds, after which I will give up
+    #[arg(long)]
+    time_limit: Option<u64>,
 }
 
 async fn fetch_page(client: &reqwest::Client, page_url: &str) ->
@@ -58,13 +61,21 @@ async fn fetch_page(client: &reqwest::Client, page_url: &str) ->
 
 async fn fetch_pages_single_origin(
         client: reqwest::Client, url_with_id: Vec<(usize, String)>,
-        tx: tokio::sync::mpsc::Sender<(usize, String, Result<String, String>)>) ->
+        tx: tokio::sync::mpsc::Sender<(usize, String, Result<String, String>)>,
+        mut terminate_rx: tokio::sync::broadcast::Receiver<bool>) ->
             Result<(), Box<dyn Error + Sync + Send>> {
+    let mut first = true;
     for (planidx, page_url) in url_with_id {
+        match terminate_rx.try_recv() {
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {},
+            _ => break,
+        }
+        if first { first = false; } else {
+            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await
+        }
         let res = fetch_page(&client, &page_url).await;
         let ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
         tx.send((planidx, ts, res)).await?;
-        tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await
     }
     Ok(())
 }
@@ -72,12 +83,8 @@ async fn fetch_pages_single_origin(
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     let args = Args::parse();
-    simplelog::TermLogger::init(
-        simplelog::LevelFilter::Trace,
-        simplelog::Config::default(),
-        simplelog::TerminalMode::Stdout,
-        simplelog::ColorChoice::Auto,
-    )?;
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info")).init();
 
     let mut plan_out = std::fs::File::create(&args.plan_out)?;
     let data_out = std::fs::File::create(&args.data_out)?;
@@ -101,37 +108,52 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         }
     }
 
-    /*
-    let mut url_to_planidx = HashMap::<String, usize>::new();
-    for (planidx, entry) in plan.iter().enumerate() {
-        url_to_planidx.insert(entry.url.to_string(), planidx);
-    }*/
-
-    let (tx, mut rx) = mpsc::channel(1024);
-
     let client = reqwest::Client::builder()
         .timeout(tokio::time::Duration::from_secs(10))
         .connect_timeout(tokio::time::Duration::from_secs(5))
         .build().unwrap();
-    
-    for (_host, pages_with_planidx) in entries_by_host {
-        let client = client.clone();
-        let tx = tx.clone();
+
+    let (terminate_tx, _terminate_rx) = tokio::sync::broadcast::channel(2);
+
+    let terminate_tx_for_delay = terminate_tx.clone();
+    if let Some(time_limit) = args.time_limit {
         tokio::spawn(async move {
-            fetch_pages_single_origin(client, pages_with_planidx, tx).await
+            info!("will exit after {} seconds from now", time_limit);
+            tokio::time::sleep(tokio::time::Duration::from_secs(time_limit)).await;
+            warn!("time is up, exiting...");
+            terminate_tx_for_delay.send(true).unwrap();
         });
     }
+
+    let terminate_tx_for_ctrlc = terminate_tx.clone();
+    ctrlc::set_handler(move || {
+        warn!("caught SIGINT, exiting...");
+        terminate_tx_for_ctrlc.send(true).unwrap();
+    })?;
+
+    let (result_tx, mut result_rx) = mpsc::channel(1024);
+
+    for (_host, pages_with_planidx) in entries_by_host {
+        let client = client.clone();
+        let result_tx_loc = result_tx.clone();
+        let terminate_rx_loc = terminate_tx.subscribe();
+        tokio::spawn(async move {
+            fetch_pages_single_origin(client, pages_with_planidx,
+                result_tx_loc, terminate_rx_loc).await
+        });
+    }
+    std::mem::drop(result_tx);
 
     let mut last_report_time = std::time::Instant::now();
 
     let mut pages_processed = 0;
-    while let Some(fr) = rx.recv().await {
+    while let Some(fr) = result_rx.recv().await {
         if last_report_time.elapsed().as_secs() >= 60 {
             info!("processed {} pages out of {}", pages_processed, pages_all);
             last_report_time = std::time::Instant::now();
         }
         pages_processed += 1;
-        let (planidx, fetched, res) = fr;
+        let (planidx, downloaded, res) = fr;
         plan[planidx].retries += 1;
         match res {
             Ok(body) => {
@@ -140,8 +162,9 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
                     url: &plan[planidx].url,
                     title: &plan[planidx].title,
                     published: &plan[planidx].published,
-                    fetched: &fetched,
+                    downloaded: &downloaded,
                     seen: &plan[planidx].seen,
+                    feed: &plan[planidx].feed,
                     body: &body,
                 };
                 data_out_json.write(&fe)?;    
