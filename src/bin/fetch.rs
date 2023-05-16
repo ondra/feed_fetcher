@@ -34,8 +34,13 @@ struct Args {
     #[arg(long)]
     time_limit: Option<u64>,
 
-    #[arg(long,default_value_t=false)]
-    compress: bool,
+    /// compress the output with zstd
+    #[arg(long)]
+    compress: Option<bool>,
+
+    /// append, do not truncate the output file
+    #[arg(long)]
+    append: Option<bool>,
 }
 
 async fn fetch_page(client: &reqwest::Client, page_url: &str) ->
@@ -88,11 +93,15 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         env_logger::Env::default().default_filter_or("info")).init();
 
     info!("opening data output at {}", &args.data_out);
-    let data_outf = std::fs::File::create(&args.data_out)?;
-    let data_wr: Box<dyn std::io::Write> = if args.compress {
-        Box::new(zstd::Encoder::new(&data_outf, 0)?)
-    } else {
-        Box::new(&data_outf)
+    let data_outf = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .append(args.append.unwrap_or(false))
+        .truncate(!args.append.unwrap_or(false))
+        .open(&args.data_out)?;
+    let data_wr: Box<dyn std::io::Write> = match args.compress {
+        Some(true) => Box::new(zstd::Encoder::new(&data_outf, 0)?),
+        _ => Box::new(&data_outf),
     };
     let mut data_out_json = serde_jsonlines::JsonLinesWriter::new(data_wr);
 
@@ -148,6 +157,7 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
 
     let (result_tx, mut result_rx) = mpsc::channel(1024);
 
+    info!("starting workers");
     for (_host, pages_with_planidx) in entries_by_host {
         let client = client.clone();
         let result_tx_loc = result_tx.clone();
