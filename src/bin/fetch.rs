@@ -41,6 +41,18 @@ struct Args {
     /// append, do not truncate the output file
     #[arg(long)]
     append: Option<bool>,
+
+    /// HTTP client timeout
+    #[arg(long,default_value_t=20)]
+    http_timeout: u64,
+
+    /// HTTP client timeout for the connection phase only
+    #[arg(long,default_value_t=12)]
+    http_connect_timeout: u64,
+
+    /// delay between successive HTTP request to the same server
+    #[arg(long,default_value_t=5)]
+    wait: u64,
 }
 
 async fn fetch_page(client: &reqwest::Client, page_url: &str) ->
@@ -68,7 +80,7 @@ async fn fetch_page(client: &reqwest::Client, page_url: &str) ->
 async fn fetch_pages_single_origin(
         client: reqwest::Client, url_with_id: Vec<(usize, String)>,
         tx: tokio::sync::mpsc::Sender<(usize, String, Result<String, String>)>,
-        mut terminate_rx: tokio::sync::broadcast::Receiver<bool>) ->
+        mut terminate_rx: tokio::sync::broadcast::Receiver<bool>, wait: u64) ->
             Result<(), Box<dyn Error + Sync + Send>> {
     let mut first = true;
     for (planidx, page_url) in url_with_id {
@@ -77,7 +89,7 @@ async fn fetch_pages_single_origin(
             _ => break,
         }
         if first { first = false; } else {
-            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await
+            tokio::time::sleep(tokio::time::Duration::from_secs(wait)).await
         }
         let res = fetch_page(&client, &page_url).await;
         let ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
@@ -133,8 +145,8 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     }
 
     let client = reqwest::Client::builder()
-        .timeout(tokio::time::Duration::from_secs(10))
-        .connect_timeout(tokio::time::Duration::from_secs(5))
+        .timeout(tokio::time::Duration::from_secs(args.http_timeout))
+        .connect_timeout(tokio::time::Duration::from_secs(args.http_connect_timeout))
         .build().unwrap();
 
     let (terminate_tx, _terminate_rx) = tokio::sync::broadcast::channel(2);
@@ -164,7 +176,7 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         let terminate_rx_loc = terminate_tx.subscribe();
         tokio::spawn(async move {
             fetch_pages_single_origin(client, pages_with_planidx,
-                result_tx_loc, terminate_rx_loc).await
+                result_tx_loc, terminate_rx_loc, args.wait).await
         });
     }
     std::mem::drop(result_tx);

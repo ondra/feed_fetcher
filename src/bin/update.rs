@@ -22,6 +22,18 @@ struct Args {
     /// time in seconds, after which I will give up
     #[arg(long)]
     time_limit: Option<u64>,
+
+    /// HTTP client timeout
+    #[arg(long,default_value_t=20)]
+    http_timeout: u64,
+
+    /// HTTP client timeout for the connection phase only
+    #[arg(long,default_value_t=12)]
+    http_connect_timeout: u64,
+
+    /// delay between successive HTTP request to the same server
+    #[arg(long,default_value_t=3)]
+    wait: u64,
 }
 
 fn read_feeds(fname: &str) -> Result<
@@ -90,7 +102,7 @@ async fn process_feed(body: &mut bytes::Bytes, feed_url: &str) ->
 async fn fetch_feeds_single_origin(
         client: reqwest::Client, feed_urls: Vec<String>,
         tx: tokio::sync::mpsc::Sender<Vec<EntryInfo>>,
-        mut terminate_rx: tokio::sync::broadcast::Receiver<bool>) ->
+        mut terminate_rx: tokio::sync::broadcast::Receiver<bool>, wait: u64) ->
             Result<(), Box<dyn Error + Sync + Send>> {
     let mut first = true;
     for feed_url in feed_urls {
@@ -99,7 +111,7 @@ async fn fetch_feeds_single_origin(
             _ => break,
         }
         if first { first = false; } else {
-            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await
+            tokio::time::sleep(tokio::time::Duration::from_secs(wait)).await
         }
         match fetch_feed(&client, &feed_url).await {
             Ok(mut body) => match process_feed(&mut body, &feed_url).await {
@@ -142,8 +154,8 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     }
 
     let client = reqwest::Client::builder()
-        .timeout(tokio::time::Duration::from_secs(10))
-        .connect_timeout(tokio::time::Duration::from_secs(5))
+        .timeout(tokio::time::Duration::from_secs(args.http_timeout))
+        .connect_timeout(tokio::time::Duration::from_secs(args.http_connect_timeout))
         .build().unwrap();
     
     let (terminate_tx, _terminate_rx) = tokio::sync::broadcast::channel(2);
@@ -172,7 +184,7 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         let terminate_rx_loc = terminate_tx.subscribe();
         tokio::spawn(async move {
             fetch_feeds_single_origin(client, feeds,
-                result_tx_loc, terminate_rx_loc).await
+                result_tx_loc, terminate_rx_loc, args.wait).await
         });
     }
     std::mem::drop(result_tx);
