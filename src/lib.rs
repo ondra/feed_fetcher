@@ -25,7 +25,7 @@ pub struct EntryInfo {
 impl EntryInfo {
     pub fn from_str(s: &str) -> Result<EntryInfo, Box<dyn Error>> {
         let parts = s.split('\t').collect::<Vec<&str>>();
-        if parts.len() != 7 {
+        if parts.len() != 8 {
             Err("wrong number of elements per line!".into())
         } else {
             Ok(EntryInfo {

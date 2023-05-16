@@ -5,6 +5,7 @@ use tokio::sync::mpsc;
 use log::*;
 use feed_fetcher::{EntryInfo, read_plan, url_to_host};
 use clap::Parser;
+use std::io::Write;
 
 const VERSION: &str = git_version::git_version!(args=["--tags","--always", "--dirty"]);
 
@@ -12,11 +13,8 @@ const VERSION: &str = git_version::git_version!(args=["--tags","--always", "--di
 #[derive(Parser, Debug)]
 #[clap(author, version=VERSION, about)]
 struct Args {
-    /// input plan, can be an empty file
-    plan_in: String,
-
-    /// output plan to be written
-    plan_out: String,
+    /// processing plan
+    planfile: String,
 
     /// list of feeds to check
     feeds: String,
@@ -126,8 +124,17 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         use rand::seq::SliceRandom;
         feeds.shuffle(&mut rng);
     }
-    let mut plan_out = std::fs::File::create(&args.plan_out)?;
-    let mut plan = read_plan(&args.plan_in)?;
+
+    info!("reading plan from {}", &args.planfile);
+    let mut plan = read_plan(&args.planfile)?;
+    info!("there are {} plan elements in total", plan.len());
+
+    let ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let planfile_bkp = args.planfile.to_string() + "." + &ts + ".update.bkp";
+    info!("moving plan to {}", &planfile_bkp);
+    std::fs::rename(&args.planfile, planfile_bkp)?;
+
+    let mut plan_out = std::fs::File::create(&args.planfile)?;
 
     let mut url_to_planidx = HashMap::<String, usize>::new();
     for (planidx, entry) in plan.iter().enumerate() {
@@ -225,9 +232,10 @@ info!("entries: {} seen, {} unseen before, {} seen multiple times in this update
 
     info!("writing output");
     for entry in plan {
-        use std::io::Write;
         plan_out.write_all(entry.into_str().as_bytes())?;
     }
+    plan_out.flush()?;
+    plan_out.sync_all()?;
     info!("done");
     Ok(())
 }

@@ -5,6 +5,7 @@ use log::*;
 use feed_fetcher::{read_plan, url_to_host};
 use clap::Parser;
 use serde::Serialize;
+use std::io::Write;
 
 #[derive(Debug, Serialize)]
 struct FetchEntry<'a> {
@@ -23,11 +24,8 @@ const VERSION: &str = git_version::git_version!(args=["--tags","--always", "--di
 #[derive(Parser, Debug)]
 #[clap(author, version=VERSION, about)]
 struct Args {
-    /// input plan, can be an empty file
-    plan_in: String,
-
-    /// output plan file to be written
-    plan_out: String,
+    /// processing plan
+    planfile: String,
 
     /// jsonlines fetched data output file
     data_out: String,
@@ -35,6 +33,9 @@ struct Args {
     /// time in seconds, after which I will give up
     #[arg(long)]
     time_limit: Option<u64>,
+
+    #[arg(long,default_value_t=false)]
+    compress: bool,
 }
 
 async fn fetch_page(client: &reqwest::Client, page_url: &str) ->
@@ -86,14 +87,28 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info")).init();
 
-    let mut plan_out = std::fs::File::create(&args.plan_out)?;
-    let data_out = std::fs::File::create(&args.data_out)?;
-    let mut data_out_json = serde_jsonlines::JsonLinesWriter::new(data_out);
-    let mut plan = read_plan(&args.plan_in)?;
+    info!("opening data output at {}", &args.data_out);
+    let data_outf = std::fs::File::create(&args.data_out)?;
+    let data_wr: Box<dyn std::io::Write> = if args.compress {
+        Box::new(zstd::Encoder::new(&data_outf, 0)?)
+    } else {
+        Box::new(&data_outf)
+    };
+    let mut data_out_json = serde_jsonlines::JsonLinesWriter::new(data_wr);
+
+    info!("reading plan from {}", &args.planfile);
+    let mut plan = read_plan(&args.planfile)?;
     info!("there are {} plan elements in total", plan.len());
 
-    let mut pages_all = 0;
+    let ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let planfile_bkp = args.planfile.to_string() + "." + &ts + ".fetch.bkp";
+    info!("moving plan to {}", &planfile_bkp);
+    std::fs::rename(&args.planfile, planfile_bkp)?;
 
+    let mut plan_out = std::fs::File::create(&args.planfile)?;
+
+    info!("preparing fetch lists");
+    let mut pages_all = 0;
     let mut entries_by_host = HashMap::<String, Vec<(usize, String)>>::new();
     for (planidx, entry) in plan.iter().enumerate() {
         if entry.retries > 4 { continue; };
@@ -175,11 +190,15 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         }
     }
 
+    data_out_json.flush()?;
+    data_outf.sync_all()?;
+
     info!("writing output plan");
     for entry in plan {
-        use std::io::Write;
         plan_out.write_all(entry.into_str().as_bytes())?;
     }
+    plan_out.flush()?;
+    plan_out.sync_all()?;
     info!("done");
     Ok(())
 }
