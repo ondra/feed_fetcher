@@ -53,6 +53,10 @@ struct Args {
     /// delay between successive HTTP request to the same server
     #[arg(long,default_value_t=5)]
     wait: u64,
+
+    /// append the current timestamp to data_out
+    #[arg(long, default_value_t=false)]
+    data_out_append_timestamp: bool,
 }
 
 async fn fetch_page(client: &reqwest::Client, page_url: &str) ->
@@ -104,13 +108,15 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info")).init();
 
+    let ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     info!("opening data output at {}", &args.data_out);
+    let data_out_fname = args.data_out + &ts;
     let data_outf = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
         .append(args.append.unwrap_or(false))
         .truncate(!args.append.unwrap_or(false))
-        .open(&args.data_out)?;
+        .open(data_out_fname)?;
     let data_wr: Box<dyn std::io::Write> = match args.compress {
         Some(true) => Box::new(zstd::Encoder::new(&data_outf, 0)?),
         _ => Box::new(&data_outf),
@@ -121,7 +127,6 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     let mut plan = read_plan(&args.planfile)?;
     info!("there are {} plan elements in total", plan.len());
 
-    let ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let planfile_bkp = args.planfile.to_string() + "." + &ts + ".fetch.bkp";
     info!("moving plan to {}", &planfile_bkp);
     std::fs::rename(&args.planfile, planfile_bkp)?;
