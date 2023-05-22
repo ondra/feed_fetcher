@@ -28,19 +28,19 @@ struct Args {
     planfile: String,
 
     /// jsonlines fetched data output file
-    data_out: String,
+    out_prefix: String,
 
     /// time in seconds, after which I will give up
     #[arg(long)]
     time_limit: Option<u64>,
 
     /// compress the output with zstd
-    #[arg(long)]
-    compress: Option<bool>,
+    #[arg(long,default_value_t=false)]
+    compress: bool,
 
     /// append, do not truncate the output file
-    #[arg(long)]
-    append: Option<bool>,
+    #[arg(long,default_value_t=false)]
+    append: bool,
 
     /// HTTP client timeout
     #[arg(long,default_value_t=20)]
@@ -54,9 +54,9 @@ struct Args {
     #[arg(long,default_value_t=5)]
     wait: u64,
 
-    /// append the current timestamp to data_out
-    #[arg(long, default_value_t=false)]
-    data_out_append_timestamp: bool,
+    /// append the current timestamp to the output filename
+    #[arg(long,default_value_t=false)]
+    out_prefix_add_timestamp: bool,
 }
 
 async fn fetch_page(client: &reqwest::Client, page_url: &str) ->
@@ -107,19 +107,24 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     let args = Args::parse();
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info")).init();
+    info!("fetch ver {} starting", &VERSION);
 
     let ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    info!("opening data output at {}", &args.data_out);
-    let data_out_fname = args.data_out + &ts;
+    let data_out_fname = args.out_prefix + &ts + ".jsonl";
+    let data_out_fname = if args.compress {
+        data_out_fname + ".zstd"
+    } else { data_out_fname };
+    info!("opening data output at {}", &data_out_fname);
     let data_outf = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
-        .append(args.append.unwrap_or(false))
-        .truncate(!args.append.unwrap_or(false))
+        .append(args.append)
+        .truncate(!args.append)
         .open(data_out_fname)?;
-    let data_wr: Box<dyn std::io::Write> = match args.compress {
-        Some(true) => Box::new(zstd::Encoder::new(&data_outf, 0)?),
-        _ => Box::new(&data_outf),
+    let data_wr: Box<dyn std::io::Write> = if args.compress {
+        Box::new(zstd::Encoder::new(&data_outf, 0)?)
+    } else {
+        Box::new(&data_outf)
     };
     let mut data_out_json = serde_jsonlines::JsonLinesWriter::new(data_wr);
 

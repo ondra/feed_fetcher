@@ -129,6 +129,7 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     let args = Args::parse();
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info")).init();
+    info!("update ver {} starting", &VERSION);
 
     let mut rng = rand::thread_rng();
     let (mut feeds_by_host, total_feeds) = read_feeds(&args.feeds)?;
