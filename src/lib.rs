@@ -44,7 +44,9 @@ impl EntryInfo {
         let sage = format!("{}", self.age);
         let sretries = format!("{}", self.retries);
         [sage, self.status, sretries, self.seen, self.published, self.feed, self.url, self.title]
-            .map(|s| s.replace('\t', ""))
+            .map(|s| s.replace('\t', " "))
+            .map(|s| s.replace('\n', " "))
+            .map(|s| s.replace('\r', ""))
             .join("\t") + "\n"
     }
 }
