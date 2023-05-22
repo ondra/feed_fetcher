@@ -122,7 +122,7 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         .truncate(!args.append)
         .open(data_out_fname)?;
     let data_wr: Box<dyn std::io::Write> = if args.compress {
-        Box::new(zstd::Encoder::new(&data_outf, 0)?)
+        Box::new(zstd::Encoder::new(&data_outf, 0)?.auto_finish())
     } else {
         Box::new(&data_outf)
     };
@@ -223,6 +223,7 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     }
 
     data_out_json.flush()?;
+    std::mem::drop(data_out_json);
     data_outf.sync_all()?;
 
     info!("writing output plan");
