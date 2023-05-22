@@ -58,7 +58,7 @@ pub fn read_plan(fname: &str) -> Result<
     let mut plan = Vec::new();
     for line in br.lines() {
         let line = line?;
-        let line = line.trim();
+        let line = line.trim_end_matches('\n');
         if line.is_empty() { continue; }
         let ei = match EntryInfo::from_str(line) {
             Ok(ei) => ei, 
