@@ -196,6 +196,7 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
 
     let (result_tx, mut result_rx) = mpsc::channel(1024);
 
+    info!("{} pages scheduled for download", pages_all);
     info!("starting workers");
     for (_host, pages_with_planidx) in entries_by_host {
         let client = client.clone();
@@ -210,13 +211,15 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
 
     let mut last_report_time = std::time::Instant::now();
 
-    let mut pages_processed = 0;
+    let mut pages_procd = 0;
+    let mut pages_err = 0;
+    let mut pages_ok = 0;
     while let Some(fr) = result_rx.recv().await {
         if last_report_time.elapsed().as_secs() >= 60 {
-            info!("processed {} pages out of {}", pages_processed, pages_all);
+            info!("processed {} pages out of {}", pages_procd, pages_all);
             last_report_time = std::time::Instant::now();
         }
-        pages_processed += 1;
+        pages_procd += 1;
         let (planidx, downloaded, res) = fr;
         plan[planidx].retries += 1;
         match res {
@@ -232,9 +235,11 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
                     body: &body,
                 };
                 data_out_json.write(&fe)?;    
+                pages_ok += 1;
             },
             Err(e) => {
                 plan[planidx].status = e;
+                pages_err += 1;
             }
         }
     }
@@ -243,6 +248,8 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     std::mem::drop(data_out_json);
     data_outf.sync_all()?;
 
+    info!("processed {} total pages, {} ok, {} err",
+          pages_procd, pages_ok, pages_err);
     info!("writing output plan");
     for entry in plan {
         plan_out.write_all(entry.into_str().as_bytes())?;
