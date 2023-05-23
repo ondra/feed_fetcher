@@ -111,7 +111,10 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
 
     let ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
 
-    let data_out_fname = args.out_prefix + &ts + ".jsonl";
+    let data_out_fname = args.out_prefix;
+    let data_out_fname = if args.out_prefix_add_timestamp {
+        data_out_fname + &ts
+    } else { data_out_fname } + ".jsonl";
     let data_out_fname = if args.compress {
         data_out_fname + ".zstd"
     } else { data_out_fname };
@@ -247,7 +250,7 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     plan_out.flush()?;
     plan_out.sync_all()?;
     info!("renaming temporary plan");
-    std::fs::rename(&planfile_bkp, &args.planfile)?;
+    std::fs::rename(&planfile_tmp, &args.planfile)?;
     info!("done");
     Ok(())
 }

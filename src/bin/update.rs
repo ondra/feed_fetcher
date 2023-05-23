@@ -266,7 +266,7 @@ info!("entries: {} seen, {} unseen before, {} seen multiple times in this update
     plan_out.flush()?;
     plan_out.sync_all()?;
     info!("renaming temporary plan");
-    std::fs::rename(&planfile_bkp, &args.planfile)?;
+    std::fs::rename(&planfile_tmp, &args.planfile)?;
     info!("done");
     Ok(())
 }
