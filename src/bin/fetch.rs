@@ -110,6 +110,7 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     info!("fetch ver {} starting", &VERSION);
 
     let ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+
     let data_out_fname = args.out_prefix + &ts + ".jsonl";
     let data_out_fname = if args.compress {
         data_out_fname + ".zstd"
@@ -128,15 +129,28 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     };
     let mut data_out_json = serde_jsonlines::JsonLinesWriter::new(data_wr);
 
-    info!("reading plan from {}", &args.planfile);
-    let mut plan = read_plan(&args.planfile)?;
-    info!("there are {} plan elements in total", plan.len());
-
     let planfile_bkp = args.planfile.to_string() + "." + &ts + ".fetch.bkp";
     info!("moving plan to {}", &planfile_bkp);
-    std::fs::rename(&args.planfile, planfile_bkp)?;
+    if let Err(e) = std::fs::rename(&args.planfile, &planfile_bkp) {
+        match e.kind() {
+            std::io::ErrorKind::NotFound => {
+                warn!("plan not found, exiting");
+                return Ok(());
+            },
+            _ => {
+                error!("plan move failed: {}", e);
+                return Err(e.into());
+            },
+        }
+    };
 
-    let mut plan_out = std::fs::File::create(&args.planfile)?;
+    let planfile_tmp = args.planfile.to_string() + "." + &ts + ".fetch.tmp";
+    info!("opening output plan at {}", &planfile_tmp);
+    let mut plan_out = std::fs::File::create(&planfile_tmp)?;
+
+    info!("reading plan from {}", &planfile_bkp);
+    let mut plan = read_plan(&planfile_bkp)?;
+    info!("there are {} plan elements in total", plan.len());
 
     info!("preparing fetch lists");
     let mut pages_all = 0;
@@ -232,6 +246,8 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     }
     plan_out.flush()?;
     plan_out.sync_all()?;
+    info!("renaming temporary plan");
+    std::fs::rename(&planfile_bkp, &args.planfile)?;
     info!("done");
     Ok(())
 }

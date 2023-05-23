@@ -131,23 +131,39 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         env_logger::Env::default().default_filter_or("info")).init();
     info!("update ver {} starting", &VERSION);
 
-    let mut rng = rand::thread_rng();
+    let ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    info!("reading feeds from {}", &args.feeds);
     let (mut feeds_by_host, total_feeds) = read_feeds(&args.feeds)?;
+
+    let planfile_bkp = args.planfile.to_string() + "." + &ts + ".update.bkp";
+
+    info!("moving plan to {}", &planfile_bkp);
+    if let Err(e) = std::fs::rename(&args.planfile, &planfile_bkp) {
+        match e.kind() {
+            std::io::ErrorKind::NotFound => {
+                warn!("plan not found, exiting");
+                return Ok(());
+            },
+            _ => {
+                error!("plan move failed: {}", e);
+                return Err(e.into());
+            },
+        }
+    };
+
+    let planfile_tmp = args.planfile.to_string() + "." + &ts + ".update.tmp";
+    info!("opening output plan at {}", &planfile_tmp);
+    let mut plan_out = std::fs::File::create(&planfile_tmp)?;
+
+    info!("reading plan from {}", &planfile_bkp);
+    let mut plan = read_plan(&planfile_bkp)?;
+    info!("there are {} plan elements in total", plan.len());
+
+    let mut rng = rand::thread_rng();
     for (_host, feeds) in feeds_by_host.iter_mut() {
         use rand::seq::SliceRandom;
         feeds.shuffle(&mut rng);
     }
-
-    info!("reading plan from {}", &args.planfile);
-    let mut plan = read_plan(&args.planfile)?;
-    info!("there are {} plan elements in total", plan.len());
-
-    let ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    let planfile_bkp = args.planfile.to_string() + "." + &ts + ".update.bkp";
-    info!("moving plan to {}", &planfile_bkp);
-    std::fs::rename(&args.planfile, planfile_bkp)?;
-
-    let mut plan_out = std::fs::File::create(&args.planfile)?;
 
     let mut url_to_planidx = HashMap::<String, usize>::new();
     for (planidx, entry) in plan.iter().enumerate() {
@@ -249,6 +265,8 @@ info!("entries: {} seen, {} unseen before, {} seen multiple times in this update
     }
     plan_out.flush()?;
     plan_out.sync_all()?;
+    info!("renaming temporary plan");
+    std::fs::rename(&planfile_bkp, &args.planfile)?;
     info!("done");
     Ok(())
 }
