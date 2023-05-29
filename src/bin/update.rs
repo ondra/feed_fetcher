@@ -232,7 +232,9 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
 
     while let Some(fr) = result_rx.recv().await {
         if last_report_time.elapsed().as_secs() >= 60 {
-            info!("processed {} feeds out of {}", feeds_all, total_feeds);
+            info!("processed {} feeds out of {}, {} with entries, {} with new entries",
+                  feeds_all, total_feeds,
+                  feeds_with_entries, feeds_with_new_entries);
             last_report_time = std::time::Instant::now();
         }
         feeds_all += 1;
