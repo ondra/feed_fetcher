@@ -105,7 +105,7 @@ async fn process_feed(body: &mut bytes::Bytes, feed_url: &str) ->
 
 async fn fetch_feeds_single_origin(
         client: reqwest::Client, feed_urls: Vec<String>,
-        tx: tokio::sync::mpsc::Sender<Vec<EntryInfo>>,
+        tx: tokio::sync::mpsc::Sender<(String, Result<Vec<EntryInfo>, Box<dyn Error + Sync + Send>>)>,
         sem: std::sync::Arc<tokio::sync::Semaphore>,
         mut terminate_rx: tokio::sync::broadcast::Receiver<bool>, wait: u64) ->
             Result<(), Box<dyn Error + Sync + Send>> {
@@ -118,16 +118,18 @@ async fn fetch_feeds_single_origin(
         if first { first = false; } else {
             tokio::time::sleep(tokio::time::Duration::from_secs(wait)).await
         }
-        match {
+        let fetch_res = {
             let _permit = sem.acquire().await.unwrap();
             fetch_feed(&client, &feed_url).await
-        } {
+        };
+        let proc_res = match fetch_res {
             Ok(mut body) => match process_feed(&mut body, &feed_url).await {
-                Ok(ei) => tx.send(ei).await?,
-                Err(e) => warn!("processing feed failed ({}): {}", &feed_url, e),
+                Ok(ei) => Ok(ei),
+                Err(e) => Err(format!("processing feed failed ({}): {}", &feed_url, e).into()),
             },
-            Err(e) => warn!("request failed ({}): {}", &feed_url, e),
-        }
+            Err(e) => Err(format!("request failed ({}): {}", &feed_url, e).into()),
+        };
+        tx.send((feed_url, proc_res)).await?;
     }
     Ok(())
 }
@@ -201,7 +203,8 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         terminate_tx_for_ctrlc.send(true).unwrap();
     })?;
 
-    let (result_tx, mut result_rx) = mpsc::channel::<Vec<EntryInfo>>(1024);
+    let (result_tx, mut result_rx) = mpsc::channel::<(String,
+            Result<Vec<EntryInfo>, Box<dyn Error + Sync + Send>>)>(1024);
 
     let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(
             args.max_concurrent_connections));
@@ -230,7 +233,7 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
 
     let mut last_report_time = std::time::Instant::now();
 
-    while let Some(fr) = result_rx.recv().await {
+    while let Some(feed_data) = result_rx.recv().await {
         if last_report_time.elapsed().as_secs() >= 60 {
             info!("processed {} feeds out of {}, {} with entries, {} with new entries",
                   feeds_all, total_feeds,
@@ -238,30 +241,38 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
             last_report_time = std::time::Instant::now();
         }
         feeds_all += 1;
-        feeds_with_entries += if fr.is_empty() { 0 } else { 1 };
-        let mut feed_has_new_entries = false;
-        for entry in fr {
-            entries_all += 1;
-            if let Some(planidx) = url_to_planidx.get(&entry.url) {
-                if *planidx >= previous_planlen {
-                    entries_seen_multiple_times_in_new_plan += 1;
-                } else {
-                    seen_previous_planidxs.insert(*planidx);
-                }
-                continue;
-            }
-            feed_has_new_entries = true;
-            entries_new += 1;
+        let (_feed_url, feed_res) = feed_data;
+        match feed_res {
+            Ok(fr) => {
+                feeds_with_entries += if fr.is_empty() { 0 } else { 1 };
+                let mut feed_has_new_entries = false;
+                for entry in fr {
+                    entries_all += 1;
+                    if let Some(planidx) = url_to_planidx.get(&entry.url) {
+                        if *planidx >= previous_planlen {
+                            entries_seen_multiple_times_in_new_plan += 1;
+                        } else {
+                            seen_previous_planidxs.insert(*planidx);
+                        }
+                        continue;
+                    }
+                    feed_has_new_entries = true;
+                    entries_new += 1;
 
-            url_to_planidx.insert(entry.url.to_string(), plan.len());
-            plan.push(entry);
+                    url_to_planidx.insert(entry.url.to_string(), plan.len());
+                    plan.push(entry);
+                }
+                feeds_with_new_entries += if feed_has_new_entries { 1 } else { 0 };
+            },
+            Err(e) => {
+                warn!("{}", &e);
+            }
         }
-        feeds_with_new_entries += if feed_has_new_entries { 1 } else { 0 };
     }
 
     info!("feeds: {} total checked, {} with entries, {} with new entries",
           feeds_all, feeds_with_entries, feeds_with_new_entries);
-info!("entries: {} seen, {} unseen before, {} seen multiple times in this update {} not visible anymore",
+    info!("entries: {} seen, {} unseen before, {} seen multiple times in this update {} not visible anymore",
           entries_all, entries_new, entries_seen_multiple_times_in_new_plan, previous_planlen - seen_previous_planidxs.len());
 
     info!("updating seen entries");
