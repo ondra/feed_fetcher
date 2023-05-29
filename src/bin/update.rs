@@ -24,16 +24,20 @@ struct Args {
     time_limit: Option<u64>,
 
     /// HTTP client timeout
-    #[arg(long,default_value_t=20)]
+    #[arg(long,default_value_t=120)]
     http_timeout: u64,
 
     /// HTTP client timeout for the connection phase only
-    #[arg(long,default_value_t=12)]
+    #[arg(long,default_value_t=60)]
     http_connect_timeout: u64,
 
     /// delay between successive HTTP request to the same server
     #[arg(long,default_value_t=3)]
     wait: u64,
+
+    /// max active concurrent connections (idle connections can exceed this)
+    #[arg(long,default_value_t=500)]
+    max_concurrent_connections: usize,
 }
 
 fn read_feeds(fname: &str) -> Result<
@@ -102,6 +106,7 @@ async fn process_feed(body: &mut bytes::Bytes, feed_url: &str) ->
 async fn fetch_feeds_single_origin(
         client: reqwest::Client, feed_urls: Vec<String>,
         tx: tokio::sync::mpsc::Sender<Vec<EntryInfo>>,
+        sem: std::sync::Arc<tokio::sync::Semaphore>,
         mut terminate_rx: tokio::sync::broadcast::Receiver<bool>, wait: u64) ->
             Result<(), Box<dyn Error + Sync + Send>> {
     let mut first = true;
@@ -113,7 +118,10 @@ async fn fetch_feeds_single_origin(
         if first { first = false; } else {
             tokio::time::sleep(tokio::time::Duration::from_secs(wait)).await
         }
-        match fetch_feed(&client, &feed_url).await {
+        match {
+            let _permit = sem.acquire().await.unwrap();
+            fetch_feed(&client, &feed_url).await
+        } {
             Ok(mut body) => match process_feed(&mut body, &feed_url).await {
                 Ok(ei) => tx.send(ei).await?,
                 Err(e) => warn!("processing feed failed ({}): {}", &feed_url, e),
@@ -195,13 +203,17 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
 
     let (result_tx, mut result_rx) = mpsc::channel::<Vec<EntryInfo>>(1024);
 
+    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(
+            args.max_concurrent_connections));
+
     for (_host, feeds) in feeds_by_host {
         let client = client.clone();
+        let sem_loc = sem.clone();
         let result_tx_loc = result_tx.clone();
         let terminate_rx_loc = terminate_tx.subscribe();
         tokio::spawn(async move {
             fetch_feeds_single_origin(client, feeds,
-                result_tx_loc, terminate_rx_loc, args.wait).await
+                result_tx_loc, sem_loc, terminate_rx_loc, args.wait).await
         });
     }
     std::mem::drop(result_tx);

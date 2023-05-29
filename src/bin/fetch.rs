@@ -43,11 +43,11 @@ struct Args {
     append: bool,
 
     /// HTTP client timeout
-    #[arg(long,default_value_t=20)]
+    #[arg(long,default_value_t=120)]
     http_timeout: u64,
 
     /// HTTP client timeout for the connection phase only
-    #[arg(long,default_value_t=12)]
+    #[arg(long,default_value_t=60)]
     http_connect_timeout: u64,
 
     /// delay between successive HTTP request to the same server
@@ -57,6 +57,10 @@ struct Args {
     /// append the current timestamp to the output filename
     #[arg(long,default_value_t=false)]
     out_prefix_add_timestamp: bool,
+
+    /// max active concurrent connections (idle connections can exceed this)
+    #[arg(long,default_value_t=500)]
+    max_concurrent_connections: usize,
 }
 
 async fn fetch_page(client: &reqwest::Client, page_url: &str) ->
@@ -84,6 +88,7 @@ async fn fetch_page(client: &reqwest::Client, page_url: &str) ->
 async fn fetch_pages_single_origin(
         client: reqwest::Client, url_with_id: Vec<(usize, String)>,
         tx: tokio::sync::mpsc::Sender<(usize, String, Result<String, String>)>,
+        sem: std::sync::Arc<tokio::sync::Semaphore>,
         mut terminate_rx: tokio::sync::broadcast::Receiver<bool>, wait: u64) ->
             Result<(), Box<dyn Error + Sync + Send>> {
     let mut first = true;
@@ -95,9 +100,13 @@ async fn fetch_pages_single_origin(
         if first { first = false; } else {
             tokio::time::sleep(tokio::time::Duration::from_secs(wait)).await
         }
-        let res = fetch_page(&client, &page_url).await;
-        let ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-        tx.send((planidx, ts, res)).await?;
+        tx.send((planidx,
+            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            {
+                let _permit = sem.acquire().await.unwrap();
+                fetch_page(&client, &page_url).await
+            }
+        )).await?;
     }
     Ok(())
 }
@@ -196,15 +205,19 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
 
     let (result_tx, mut result_rx) = mpsc::channel(1024);
 
+    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(
+            args.max_concurrent_connections));
+
     info!("{} pages scheduled for download", pages_all);
     info!("starting workers");
     for (_host, pages_with_planidx) in entries_by_host {
         let client = client.clone();
         let result_tx_loc = result_tx.clone();
+        let sem_loc = sem.clone();
         let terminate_rx_loc = terminate_tx.subscribe();
         tokio::spawn(async move {
             fetch_pages_single_origin(client, pages_with_planidx,
-                result_tx_loc, terminate_rx_loc, args.wait).await
+                result_tx_loc, sem_loc, terminate_rx_loc, args.wait).await
         });
     }
     std::mem::drop(result_tx);
