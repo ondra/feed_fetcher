@@ -15,7 +15,8 @@ struct FetchEntry<'a> {
     seen: &'a str,
     downloaded: &'a str,
     feed: &'a str,
-    body: &'a str,
+    body_base64: &'a str,
+    content_type: &'a Vec<String>,
 }
 
 const VERSION: &str = git_version::git_version!(args=["--tags","--always", "--dirty"]);
@@ -64,7 +65,7 @@ struct Args {
 }
 
 async fn fetch_page(client: &reqwest::Client, page_url: &str) ->
-        Result<String, String> {
+        Result<(bytes::Bytes, Vec<String>), String> {
     let response = match client.get(page_url).send().await {
         Ok(response) => response,
         Err(e) => {
@@ -75,8 +76,15 @@ async fn fetch_page(client: &reqwest::Client, page_url: &str) ->
     if response.status() != 200 {
         return Err(format!("{}", response.status()));
     }
-    let body = match response.text().await {
-        Ok(body) => body,
+    let content_type = response.headers()
+        .get_all(reqwest::header::CONTENT_TYPE)
+        .iter()
+        .map(|x| x.to_str().unwrap_or_default().to_string())
+        .collect::<Vec<String>>();
+    let body = match response.bytes().await {
+        Ok(body) => {
+            (body, content_type)
+        },
         Err(e) => {
             warn!("response for {} failed: {}", page_url, e);
             return Err("res".to_string());
@@ -87,7 +95,8 @@ async fn fetch_page(client: &reqwest::Client, page_url: &str) ->
 
 async fn fetch_pages_single_origin(
         client: reqwest::Client, url_with_id: Vec<(usize, String)>,
-        tx: tokio::sync::mpsc::Sender<(usize, String, Result<String, String>)>,
+        tx: tokio::sync::mpsc::Sender<(usize, String,
+            Result<(bytes::Bytes, Vec<String>), String>)>,
         sem: std::sync::Arc<tokio::sync::Semaphore>,
         mut terminate_rx: tokio::sync::broadcast::Receiver<bool>, wait: u64) ->
             Result<(), Box<dyn Error + Sync + Send>> {
@@ -236,8 +245,11 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         let (planidx, downloaded, res) = fr;
         plan[planidx].retries += 1;
         match res {
-            Ok(body) => {
+            Ok((body, content_type)) => {
                 plan[planidx].status = "ok".to_string();
+                use base64::Engine as _;
+                let body_encoded = base64::engine::general_purpose::STANDARD
+                    .encode(&body);
                 let fe = FetchEntry {
                     url: &plan[planidx].url,
                     title: &plan[planidx].title,
@@ -245,7 +257,8 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
                     downloaded: &downloaded,
                     seen: &plan[planidx].seen,
                     feed: &plan[planidx].feed,
-                    body: &body,
+                    body_base64: &body_encoded,
+                    content_type: &content_type,
                 };
                 data_out_json.write(&fe)?;    
                 pages_ok += 1;
