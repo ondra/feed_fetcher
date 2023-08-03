@@ -286,11 +286,7 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
 
     info!("writing output");
     for entry in plan {
-        if entry.age > 1 && (entry.status == "ok" || entry.retries >= 5) {
-            // do not store stale entries
-        } else {
-            plan_out.write_all(entry.into_str().as_bytes())?;
-        }
+        plan_out.write_all(entry.into_str().as_bytes())?;
     }
     plan_out.flush()?;
     plan_out.sync_all()?;
