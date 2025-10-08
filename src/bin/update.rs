@@ -79,7 +79,10 @@ async fn fetch_feed(client: &reqwest::Client, feed_url: &str) ->
 async fn process_feed(body: &mut bytes::Bytes, feed_url: &str) ->
         Result<Vec<EntryInfo>, Box<dyn Error + Sync + Send>> {
     use bytes::Buf;
-    let feed = feed_rs::parser::parse_with_uri(body.reader(), Some(feed_url))?;
+    let parser = feed_rs::parser::Builder::new()
+        .base_uri(Some(feed_url))
+        .build();
+    let feed = parser.parse(body.reader())?;
     Ok(feed.entries.into_iter().filter_map(
         |entry| {
             if entry.links.is_empty() { return None; }
@@ -169,7 +172,7 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     let mut plan = read_plan(&planfile_bkp)?;
     info!("there are {} plan elements in total", plan.len());
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     for (_host, feeds) in feeds_by_host.iter_mut() {
         use rand::seq::SliceRandom;
         feeds.shuffle(&mut rng);
