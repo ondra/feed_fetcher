@@ -31,7 +31,7 @@ struct Args {
     /// jsonlines fetched data output file
     out_prefix: String,
 
-    /// time in seconds, after which I will give up
+    /// time in seconds, after which the program will terminate
     #[arg(long)]
     time_limit: Option<u64>,
 
@@ -39,19 +39,19 @@ struct Args {
     #[arg(long,default_value_t=false)]
     compress: bool,
 
-    /// append, do not truncate the output file
+    /// do not truncate the output file, append to it
     #[arg(long,default_value_t=false)]
     append: bool,
 
-    /// HTTP client timeout
+    /// HTTP client timeout in seconds
     #[arg(long,default_value_t=120)]
     http_timeout: u64,
 
-    /// HTTP client timeout for the connection phase only
+    /// HTTP client timeout in seconds, for the connection phase only
     #[arg(long,default_value_t=60)]
     http_connect_timeout: u64,
 
-    /// delay between successive HTTP request to the same server
+    /// delay in seconds between successive HTTP request to the same server
     #[arg(long,default_value_t=5)]
     wait: u64,
 
