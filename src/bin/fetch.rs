@@ -62,6 +62,10 @@ struct Args {
     /// max active concurrent connections (idle connections can exceed this)
     #[arg(long,default_value_t=500)]
     max_concurrent_connections: usize,
+
+    /// HTTP user agent
+    #[arg(long,default_value="FeedFetcher (+https://www.sketchengine.eu; support@sketchengine.eu)")]
+    user_agent: String,
 }
 
 async fn fetch_page(client: &reqwest::Client, page_url: &str) ->
@@ -199,6 +203,7 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     let client = reqwest::Client::builder()
         .timeout(tokio::time::Duration::from_secs(args.http_timeout))
         .connect_timeout(tokio::time::Duration::from_secs(args.http_connect_timeout))
+        .user_agent(args.user_agent)
         .build().unwrap();
 
     let (terminate_tx, _terminate_rx) = tokio::sync::broadcast::channel(2);
