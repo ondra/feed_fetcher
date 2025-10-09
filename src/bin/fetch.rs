@@ -21,7 +21,7 @@ struct FetchEntry<'a> {
 
 const VERSION: &str = git_version::git_version!(args=["--tags","--always", "--dirty"]);
 
-/// Update fetch plan from a list of feeds
+/// Fetch pages according to the plan
 #[derive(Parser, Debug)]
 #[clap(author, version=VERSION, about)]
 struct Args {
