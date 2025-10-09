@@ -176,6 +176,7 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     info!("preparing fetch lists");
     let mut pages_all = 0;
     let mut entries_by_host = HashMap::<String, Vec<(usize, String)>>::new();
+
     for (planidx, entry) in plan.iter().enumerate() {
         if entry.retries > 4 { continue; };
         if entry.status == "ok" { continue; };
@@ -187,6 +188,12 @@ async fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
             },
             Err(e) => warn!("parsing url {} failed: {}", entry.url, e)
         }
+    }
+
+    let mut rng = rand::rng();
+    for (_host, entries) in entries_by_host.iter_mut() {
+        use rand::seq::SliceRandom;
+        entries.shuffle(&mut rng);
     }
 
     let client = reqwest::Client::builder()
