@@ -17,7 +17,7 @@ git-version = "0.3.9"
 log = "0.4.28"
 mime = "0.3.17"
 rand = "0.9.2"
-reqwest = { version = "0.12.23", features = ["gzip", "brotli"] }
+reqwest = { version = "0.12.23", default-features = false, features = ["gzip", "brotli", "rustls-tls", "http2", "charset", "system-proxy", "h2"] }
 serde = "1.0.228"
 serde-jsonlines = "0.7.0"
 tokio = { version = "1.47.1", features = ["full"] }
