@@ -34,3 +34,5 @@ FeedFetcher uses the Rust programming language. Follow the instructions at [rust
 3. Download the dependencies and compile the program: `cargo build --release`
 
 The `target/` directory now contains the binaries.
+
+To enable building Linux static binaries using musl libc, uncomment the `rustflags` and `target` entries in `.cargo/config.toml` and install musl toolchain using `rustup target add x86_64-unknown-linux-musl`. Then, `cargo build` will produce statically linked binaries without any dependencies.
