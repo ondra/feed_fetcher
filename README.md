@@ -13,6 +13,13 @@ To periodically monitor and download articles from a list of web feeds, follow t
 5. Periodically run `update` to download all web feeds, check them for changes and update the download plan, and `fetch` to download new articles according to the plan:
   1. `update ~/feed_download/plan.txt ~/feed_download/feeds.txt`
   2. `fetch ~/feed_download/plan.txt ~/feed_download/pages/ --out-prefix-add-timestamp`
+
+The output files in a JSONLines format will be written to the `~/feed_download/pages/` directory. Each record represents a single feed entry (article) and contains the following fields:
+ - `title`: Title provided by the feed.
+ - `published`: Publication time provided by the feed.
+ - `seen`: Time of the article appearance in the feed as seen by `update`.
+ - `downloaded`: Time of the article download by `fetch`.
+ - `body`: Contents of the feed entry.
    
 You can use the prebuilt `fetch` and `update` binaries for Linux/x86_64 located in the `bin/` subdirectory of this repository, or build your own according to the instructions in the "Installation" section.
 
