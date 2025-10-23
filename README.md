@@ -15,6 +15,8 @@ To periodically monitor and download articles from a list of web feeds, follow t
   2. `fetch ~/feed_download/plan.txt ~/feed_download/pages/ --out-prefix-add-timestamp`
 
 The output files in a JSONLines format will be written to the `~/feed_download/pages/` directory. Each record represents a single feed entry (article) and contains the following fields:
+ - `url`: URL of the entry.
+ - `feed`: URL of the feed, in which the entry was seen.
  - `title`: Title provided by the feed.
  - `published`: Publication time provided by the feed.
  - `seen`: Time of the article appearance in the feed as seen by `update`.
